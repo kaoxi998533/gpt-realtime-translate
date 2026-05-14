@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>GPT Realtime Translate</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="workspace" aria-label="Realtime translator">
+        <div class="topbar">
+          <div>
+            <p class="eyebrow">GPT Realtime Translate</p>
+            <h1>实时中英语音翻译</h1>
+          </div>
+          <div class="status" id="status">未连接</div>
+        </div>
+
+        <div class="controls" role="group" aria-label="Translation mode">
+          <button class="mode active" data-mode="auto" type="button">自动</button>
+          <button class="mode" data-mode="zh_en" type="button">中 → EN</button>
+          <button class="mode" data-mode="en_zh" type="button">EN → 中</button>
+        </div>
+
+        <div class="stage">
+          <button class="talk-button" id="talkButton" type="button" disabled aria-label="按住说话">
+            <span class="pulse pulse-one"></span>
+            <span class="pulse pulse-two"></span>
+            <span class="mic">🎙</span>
+          </button>
+          <div class="listen-row">
+            <span>按住说话</span>
+            <button class="listen-toggle" id="autoListenButton" type="button" disabled aria-pressed="false">
+              <span></span>
+            </button>
+            <span>自动监听</span>
+          </div>
+          <div class="listen-row">
+            <span>普通输出</span>
+            <button class="listen-toggle" id="stereoButton" type="button" aria-pressed="false">
+              <span></span>
+            </button>
+            <span>左右耳</span>
+          </div>
+          <div class="device-grid" aria-label="Audio devices">
+            <label class="device-field">
+              <span>输入设备</span>
+              <select id="inputDeviceSelect">
+                <option value="">系统默认输入</option>
+              </select>
+            </label>
+            <label class="device-field">
+              <span>输出设备</span>
+              <select id="outputDeviceSelect">
+                <option value="">系统默认输出</option>
+              </select>
+            </label>
+          </div>
+          <div class="key-row" id="keyRow" hidden>
+            <input id="apiKeyInput" type="password" autocomplete="off" placeholder="OpenAI API key" />
+            <button id="saveKeyButton" type="button">保存</button>
+          </div>
+          <p class="hint" id="hint">先连接 Realtime，会请求麦克风权限。</p>
+          <button class="connect" id="connectButton" type="button">连接</button>
+        </div>
+
+        <div class="panels">
+          <article class="panel">
+            <h2>你说的</h2>
+            <p id="sourceText">等待语音输入</p>
+          </article>
+          <article class="panel">
+            <h2>翻译</h2>
+            <p id="translationText">等待输出</p>
+          </article>
+        </div>
+
+        <details class="events">
+          <summary>事件日志</summary>
+          <pre id="eventLog"></pre>
+        </details>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

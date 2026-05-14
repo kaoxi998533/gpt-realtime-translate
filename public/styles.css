@@ -1,0 +1,398 @@
+:root {
+  color-scheme: light;
+  --bg: #f5f7f8;
+  --surface: #ffffff;
+  --ink: #16201f;
+  --muted: #667370;
+  --line: #dce4e2;
+  --accent: #0d7c66;
+  --accent-strong: #075c4c;
+  --accent-soft: #dff4ee;
+  --warning: #9a4d00;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 32px;
+  display: grid;
+  place-items: center;
+}
+
+.workspace {
+  width: min(960px, 100%);
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 24px;
+  align-items: flex-start;
+  margin-bottom: 22px;
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(34px, 7vw, 72px);
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+
+.status {
+  min-width: 116px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+.status.ready {
+  color: var(--accent-strong);
+  border-color: #9ed8c9;
+  background: var(--accent-soft);
+}
+
+.status.error {
+  color: var(--warning);
+  border-color: #efc18a;
+  background: #fff3e5;
+}
+
+.status.paused {
+  color: #5f4a00;
+  border-color: #e5ce76;
+  background: #fff8d7;
+}
+
+.controls {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 28px;
+}
+
+.mode {
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.mode.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 700;
+}
+
+.stage {
+  display: grid;
+  justify-items: center;
+  gap: 16px;
+  padding: 40px 20px;
+}
+
+.talk-button {
+  position: relative;
+  width: min(42vw, 220px);
+  aspect-ratio: 1;
+  border: 0;
+  border-radius: 50%;
+  background: var(--accent);
+  color: white;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 18px 50px rgba(13, 124, 102, 0.25);
+  touch-action: none;
+}
+
+.talk-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+  box-shadow: none;
+}
+
+.talk-button.recording {
+  background: #c43b3b;
+}
+
+.talk-button.auto-listening {
+  background: #1668b2;
+}
+
+.talk-button.paused {
+  background: #707a78;
+  box-shadow: none;
+}
+
+.pulse {
+  position: absolute;
+  inset: 14px;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.45);
+}
+
+.talk-button.recording .pulse {
+  animation: pulse 1s ease-out infinite;
+}
+
+.talk-button.auto-listening .pulse {
+  animation: pulse 1.35s ease-out infinite;
+}
+
+.talk-button.auto-listening .pulse-two {
+  animation-delay: 0.42s;
+}
+
+.talk-button.paused .pulse {
+  animation: none;
+  opacity: 0.35;
+}
+
+.mic {
+  font-size: clamp(44px, 10vw, 78px);
+  line-height: 1;
+}
+
+.listen-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.listen-toggle {
+  width: 54px;
+  height: 30px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.listen-toggle span {
+  display: block;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #9aa4a1;
+  transition:
+    transform 160ms ease,
+    background 160ms ease;
+}
+
+.listen-toggle.active {
+  border-color: #8bbce8;
+  background: #e7f2fb;
+}
+
+.listen-toggle.active span {
+  background: #1668b2;
+  transform: translateX(24px);
+}
+
+.listen-toggle:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.device-grid {
+  width: min(620px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.device-field {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.device-field select {
+  width: 100%;
+  min-width: 0;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 36px 0 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.key-row {
+  width: min(520px, 100%);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.key-row[hidden] {
+  display: none;
+}
+
+.key-row input {
+  min-width: 0;
+  height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 0 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+}
+
+.key-row button {
+  height: 42px;
+  border: 0;
+  border-radius: 6px;
+  padding: 0 14px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.hint {
+  min-height: 24px;
+  margin: 0;
+  color: var(--muted);
+  text-align: center;
+}
+
+.connect {
+  height: 44px;
+  min-width: 120px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.connect:disabled {
+  background: #9aa4a1;
+  cursor: not-allowed;
+}
+
+.panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-top: 10px;
+}
+
+.panel {
+  min-height: 150px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  color: var(--muted);
+}
+
+.panel p {
+  margin: 0;
+  font-size: 22px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.events {
+  margin-top: 14px;
+  color: var(--muted);
+}
+
+.events summary {
+  cursor: pointer;
+}
+
+pre {
+  max-height: 200px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #111817;
+  color: #d8ece7;
+  font-size: 12px;
+}
+
+@keyframes pulse {
+  from {
+    transform: scale(0.9);
+    opacity: 0.85;
+  }
+  to {
+    transform: scale(1.35);
+    opacity: 0;
+  }
+}
+
+@media (max-width: 700px) {
+  .app-shell {
+    padding: 20px;
+    place-items: start center;
+  }
+
+  .topbar,
+  .panels {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .status {
+    width: 100%;
+  }
+
+  .controls {
+    grid-template-columns: 1fr;
+  }
+
+  .device-grid {
+    grid-template-columns: 1fr;
+  }
+}
