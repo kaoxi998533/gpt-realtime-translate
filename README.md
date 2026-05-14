@@ -18,7 +18,7 @@ The API key stays on the Node server. The browser receives a short-lived Realtim
 ## Notes
 
 - Press and hold the microphone button to speak. Release it and the model speaks the translation.
-- Turn on auto listen to keep the microphone open. The Realtime server VAD detects the end of each sentence and translates automatically. Click the center button while auto listen is active to pause; pause fully disconnects Realtime.
+- Turn on auto listen to keep the microphone open. The Realtime server VAD detects the end of each sentence and translates automatically. Auto listen can continue while the Android app is backgrounded or the phone is locked. Click the center button while auto listen is active to pause; pause fully disconnects Realtime.
 - Use the input/output device menus to choose microphones and speakers where the browser or Android system supports it.
 - Turn on left/right ears to route English output to the right channel and Chinese output to the left channel.
 - Modes: Auto, Chinese to English, English to Chinese.

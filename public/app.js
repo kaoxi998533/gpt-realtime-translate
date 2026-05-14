@@ -15,11 +15,6 @@ const eventLog = document.querySelector("#eventLog");
 const micIcon = document.querySelector(".mic");
 const modeButtons = [...document.querySelectorAll(".mode")];
 
-const MAX_SESSION_MS = 9 * 60 * 1000;
-const AUTO_IDLE_MS = 2 * 60 * 1000;
-const CONNECTED_IDLE_MS = 5 * 60 * 1000;
-const HIDDEN_DISCONNECT_MS = 30 * 1000;
-
 let mode = "auto";
 let pc;
 let dc;
@@ -35,9 +30,6 @@ let stereoRouting = false;
 let paused = false;
 let pendingAutoListen = false;
 let nextOutputPan = 0;
-let sessionTimer;
-let idleTimer;
-let hiddenTimer;
 let selectedInputDeviceId = "";
 let selectedOutputDeviceId = "";
 const isAndroidApp = Boolean(window.AndroidBridge);
@@ -50,25 +42,6 @@ function setStatus(text, state = "") {
 function logEvent(event) {
   const line = `[${new Date().toLocaleTimeString()}] ${event.type}`;
   eventLog.textContent = `${line}\n${eventLog.textContent}`.slice(0, 7000);
-}
-
-function resetTimers() {
-  clearTimeout(sessionTimer);
-  clearTimeout(idleTimer);
-  clearTimeout(hiddenTimer);
-}
-
-function refreshIdleTimer() {
-  clearTimeout(idleTimer);
-  if (!pc) return;
-  const timeout = autoListening ? AUTO_IDLE_MS : CONNECTED_IDLE_MS;
-  idleTimer = setTimeout(() => {
-    const wasAutoListening = autoListening;
-    disconnect();
-    hint.textContent = wasAutoListening
-      ? "自动监听空闲超过 2 分钟，已自动断开以避免继续占用 token。"
-      : "连接空闲超过 5 分钟，已自动断开。";
-  }, timeout);
 }
 
 function setMode(nextMode) {
@@ -102,7 +75,6 @@ function resetConnectedControls() {
 
 function disconnect(options = {}) {
   const keepPaused = Boolean(options.keepPaused);
-  resetTimers();
   if (dc) dc.close();
   if (pc) pc.close();
   if (remoteSource) remoteSource.disconnect();
@@ -200,11 +172,6 @@ async function connect() {
       connectButton.textContent = "断开";
       connectButton.disabled = false;
       hint.textContent = "按住麦克风说话，或打开自动监听。";
-      sessionTimer = setTimeout(() => {
-        disconnect();
-        hint.textContent = "本次 Realtime 会话已达到 9 分钟上限，已自动断开。";
-      }, MAX_SESSION_MS);
-      refreshIdleTimer();
       if (pendingAutoListen) {
         pendingAutoListen = false;
         setAutoListening(true);
@@ -260,18 +227,15 @@ function handleRealtimeEvent(event) {
     applyOutputPan();
     translationText.textContent = "正在听";
     hint.textContent = "检测到语音，说完停顿一下会自动翻译。";
-    refreshIdleTimer();
   }
 
   if (event.type === "input_audio_buffer.speech_stopped" && autoListening) {
     hint.textContent = "检测到停顿，正在翻译。";
-    refreshIdleTimer();
   }
 
   if (event.type === "conversation.item.input_audio_transcription.completed") {
     sourceText.textContent = event.transcript || "未识别到文字";
     nextOutputPan = detectPanForTranscript(event.transcript || "");
-    refreshIdleTimer();
   }
 
   if (event.type === "response.output_audio_transcript.delta") {
@@ -284,7 +248,6 @@ function handleRealtimeEvent(event) {
   if (event.type === "response.output_audio_transcript.done") {
     currentTranslation = event.transcript || currentTranslation;
     translationText.textContent = currentTranslation || "翻译完成";
-    refreshIdleTimer();
   }
 
   if (event.type === "response.created") {
@@ -332,7 +295,6 @@ function startTalking(event) {
   micTrack.enabled = true;
   talkButton.classList.add("recording");
   hint.textContent = "正在听，松开后翻译。";
-  refreshIdleTimer();
 }
 
 function stopTalking(event) {
@@ -341,7 +303,6 @@ function stopTalking(event) {
   micTrack.enabled = false;
   talkButton.classList.remove("recording");
   hint.textContent = "处理中。";
-  refreshIdleTimer();
 }
 
 function setAutoListening(nextValue) {
@@ -363,7 +324,6 @@ function setAutoListening(nextValue) {
     hint.textContent = "自动监听已关闭，可以按住麦克风说话。";
     translationText.textContent = "等待输出";
   }
-  refreshIdleTimer();
 }
 
 function pauseAutoListening() {
@@ -547,16 +507,6 @@ talkButton.addEventListener("pointerleave", (event) => {
 });
 
 navigator.mediaDevices?.addEventListener?.("devicechange", refreshAudioDevices);
-document.addEventListener("visibilitychange", () => {
-  clearTimeout(hiddenTimer);
-  if (document.hidden && pc) {
-    hiddenTimer = setTimeout(() => {
-      disconnect();
-      hint.textContent = "应用进入后台超过 30 秒，已自动断开。";
-    }, HIDDEN_DISCONNECT_MS);
-  }
-});
-
 window.addEventListener("beforeunload", () => disconnect());
 window.realtimeTranslateDisconnect = () => {
   disconnect();

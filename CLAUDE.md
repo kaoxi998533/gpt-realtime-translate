@@ -40,18 +40,19 @@ Important state variables in `public/app.js`:
 - `pendingAutoListen`: reconnect helper that turns auto listening back on once the data channel opens.
 - `selectedInputDeviceId`, `selectedOutputDeviceId`: selected device IDs from the menus.
 
-## Token And Resource Guardrails
+## Resource Lifecycle
 
-The frontend intentionally prevents Realtime from running forever:
+Realtime sessions are intentionally allowed to continue while the Android app is backgrounded or the phone is locked, because the expected use case includes putting the phone in a pocket during auto listen.
 
-- Auto-listen idle timeout: 2 minutes.
-- Connected idle timeout outside auto-listen: 5 minutes.
-- Hard session timeout: 9 minutes, below the 10-minute client secret expiry.
-- Page hidden timeout: 30 seconds.
-- Android `onPause()` calls `window.realtimeTranslateDisconnect()` immediately.
-- Pause mode fully disconnects Realtime instead of only muting the microphone.
+The app releases Realtime/media resources when:
 
-When adding features, keep these guardrails intact. Do not leave `micTrack.enabled = true` or an open `RTCPeerConnection` after pause, app backgrounding, mode changes, or device changes.
+- The user taps Disconnect.
+- The user taps the center button while auto listen is active, entering pause mode.
+- The user changes translation mode.
+- The user changes input device while connected, which requires reconnecting the microphone track.
+- The web page unloads or the Android activity is destroyed after the app is cleared.
+
+Pause mode fully disconnects Realtime instead of only muting the microphone. Do not add background, page-hidden, idle, or hard session timers without confirming the product behavior again.
 
 ## Audio Devices
 
