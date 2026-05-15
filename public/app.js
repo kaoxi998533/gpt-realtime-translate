@@ -249,11 +249,6 @@ async function connect(options = {}) {
       handleRealtimeEvent(event);
     });
 
-    if (isAndroidApp && !isDebugMode()) {
-      const warmup = await androidCall("warmUpAudioRoute");
-      logDebug("android.audio_warmup", warmup || {});
-      await delay(160);
-    }
     await refreshAudioDevices();
     if (shouldUseNativeInput()) {
       pc.addTransceiver("audio", { direction: "recvonly" });

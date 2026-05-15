@@ -164,11 +164,6 @@ public class MainActivity extends Activity {
             callback(callbackName, "true");
         }
 
-        @JavascriptInterface
-        public void warmUpAudioRoute(String ignored, String callbackName) {
-            new Thread(() -> callback(callbackName, warmUpAudioRouteOnce())).start();
-        }
-
         private void callback(String callbackName, String value) {
             runOnUiThread(() -> webView.evaluateJavascript(
                     "window." + callbackName + "(" + JSONObject.quote(value) + ")", null));
@@ -366,10 +361,14 @@ public class MainActivity extends Activity {
     private String startNativeInputStream(String deviceId) {
         stopNativeInputStream();
         try {
-            AudioDeviceInfo target = findInputDeviceById(deviceId);
-            if (target == null) {
-                warmUpAudioRouteOnce();
-                target = findInputDeviceById(deviceId);
+            AudioDeviceInfo target = null;
+            if (audioManager != null) {
+                for (AudioDeviceInfo device : audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
+                    if (String.valueOf(device.getId()).equals(deviceId)) {
+                        target = device;
+                        break;
+                    }
+                }
             }
             if (target == null) {
                 return new JSONObject().put("ok", false).put("error", "input device not found").toString();
@@ -410,76 +409,6 @@ public class MainActivity extends Activity {
                 return "{\"ok\":false,\"error\":\"start native input stream failed\"}";
             }
         }
-    }
-
-    @SuppressLint("MissingPermission")
-    private String warmUpAudioRouteOnce() {
-        AudioRecord recorder = null;
-        try {
-            if (audioManager != null) {
-                audioManager.setMode(AudioManager.MODE_IN_COMMUNICATION);
-                audioManager.setSpeakerphoneOn(false);
-            }
-
-            int sampleRate = 48000;
-            int minBuffer = AudioRecord.getMinBufferSize(
-                    sampleRate,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT);
-            if (minBuffer <= 0) {
-                sampleRate = 44100;
-                minBuffer = AudioRecord.getMinBufferSize(
-                        sampleRate,
-                        AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT);
-            }
-            if (minBuffer <= 0) throw new IllegalStateException("invalid AudioRecord buffer size");
-
-            recorder = new AudioRecord(
-                    MediaRecorder.AudioSource.MIC,
-                    sampleRate,
-                    AudioFormat.CHANNEL_IN_MONO,
-                    AudioFormat.ENCODING_PCM_16BIT,
-                    minBuffer * 2);
-            recorder.startRecording();
-            short[] buffer = new short[Math.max(256, minBuffer / 4)];
-            long deadline = System.currentTimeMillis() + 350;
-            int reads = 0;
-            while (System.currentTimeMillis() < deadline) {
-                int read = recorder.read(buffer, 0, buffer.length);
-                if (read > 0) reads += 1;
-                if (reads >= 3) break;
-            }
-            JSONObject result = new JSONObject()
-                    .put("ok", true)
-                    .put("sampleRate", sampleRate)
-                    .put("reads", reads);
-            Log.i(TAG, "audio route warmup " + result);
-            return result.toString();
-        } catch (Exception error) {
-            Log.e(TAG, "audio route warmup failed", error);
-            try {
-                return new JSONObject().put("ok", false).put("error", error.getMessage()).toString();
-            } catch (Exception ignored) {
-                return "{\"ok\":false,\"error\":\"audio route warmup failed\"}";
-            }
-        } finally {
-            if (recorder != null) {
-                try {
-                    recorder.stop();
-                } catch (Exception ignored) {
-                }
-                recorder.release();
-            }
-        }
-    }
-
-    private AudioDeviceInfo findInputDeviceById(String deviceId) {
-        if (audioManager == null) return null;
-        for (AudioDeviceInfo device : audioManager.getDevices(AudioManager.GET_DEVICES_INPUTS)) {
-            if (String.valueOf(device.getId()).equals(deviceId)) return device;
-        }
-        return null;
     }
 
     private void runNativeInputLoop(AudioRecord recorder, AudioDeviceInfo target, int sampleRate, boolean preferred) {
