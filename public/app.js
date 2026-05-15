@@ -4,6 +4,7 @@ const autoListenButton = document.querySelector("#autoListenButton");
 const stereoButton = document.querySelector("#stereoButton");
 const inputDeviceSelect = document.querySelector("#inputDeviceSelect");
 const outputDeviceSelect = document.querySelector("#outputDeviceSelect");
+const nativeInputTestButton = document.querySelector("#nativeInputTestButton");
 const keyRow = document.querySelector("#keyRow");
 const apiKeyInput = document.querySelector("#apiKeyInput");
 const saveKeyButton = document.querySelector("#saveKeyButton");
@@ -24,6 +25,10 @@ let remoteAudio;
 let audioContext;
 let remoteSource;
 let stereoPanner;
+let mediaRecorder;
+let recordedChunks = [];
+let debugConnected = false;
+let playbackUrl = "";
 let currentTranslation = "";
 let autoListening = false;
 let stereoRouting = false;
@@ -32,7 +37,12 @@ let pendingAutoListen = false;
 let nextOutputPan = 0;
 let selectedInputDeviceId = "";
 let selectedOutputDeviceId = "";
+let selectedInputLabel = "";
+let nativeInputDeviceId = "";
+let nativeInputActive = false;
+let nativeInputSending = false;
 const isAndroidApp = Boolean(window.AndroidBridge);
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function setStatus(text, state = "") {
   statusEl.textContent = text;
@@ -44,16 +54,43 @@ function logEvent(event) {
   eventLog.textContent = `${line}\n${eventLog.textContent}`.slice(0, 7000);
 }
 
+function logDebug(type, details = {}) {
+  const event = { type, ...details };
+  const serialized = JSON.stringify(event);
+  eventLog.textContent = `[${new Date().toLocaleTimeString()}] ${serialized}\n${eventLog.textContent}`.slice(0, 7000);
+  try {
+    window.AndroidBridge?.log?.(serialized, "");
+  } catch {
+    // Native log forwarding is best-effort diagnostics only.
+  }
+}
+
 function setMode(nextMode) {
   mode = nextMode;
   modeButtons.forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === mode);
   });
 
-  if (pc) {
+  if (isConnected()) {
     disconnect();
     hint.textContent = "模式已切换，请重新连接。";
   }
+}
+
+function isDebugMode() {
+  return mode === "debug";
+}
+
+function isConnected() {
+  return Boolean(pc || debugConnected);
+}
+
+function shouldUseNativeInput() {
+  return isAndroidApp && !isDebugMode() && Boolean(nativeInputDeviceId);
+}
+
+function inputReady() {
+  return shouldUseNativeInput() ? nativeInputActive : Boolean(micTrack);
 }
 
 function cleanupMedia() {
@@ -75,17 +112,27 @@ function resetConnectedControls() {
 
 function disconnect(options = {}) {
   const keepPaused = Boolean(options.keepPaused);
+  if (mediaRecorder?.state === "recording") {
+    mediaRecorder.onstop = null;
+    mediaRecorder.stop();
+  }
   if (dc) dc.close();
   if (pc) pc.close();
   if (remoteSource) remoteSource.disconnect();
   if (stereoPanner) stereoPanner.disconnect();
   if (remoteAudio) remoteAudio.remove();
+  if (playbackUrl) URL.revokeObjectURL(playbackUrl);
+  stopNativeInputStream();
   cleanupMedia();
   pc = null;
   dc = null;
+  mediaRecorder = null;
+  recordedChunks = [];
+  debugConnected = false;
   remoteAudio = null;
   remoteSource = null;
   stereoPanner = null;
+  playbackUrl = "";
   resetConnectedControls();
   connectButton.disabled = false;
   connectButton.textContent = "连接";
@@ -110,27 +157,43 @@ function disconnect(options = {}) {
 
 function selectedInputConstraint() {
   const deviceId = selectedInputDeviceId;
-  return {
+  const constraint = {
     echoCancellation: true,
     noiseSuppression: true,
     autoGainControl: true,
-    ...(deviceId && !isAndroidApp ? { deviceId: { exact: deviceId } } : {}),
+    ...(deviceId ? { deviceId: { exact: deviceId } } : {}),
   };
+  logDebug("audio.input_constraint", {
+    selectedInputDeviceId: deviceId || "default",
+    selectedInputLabel: inputDeviceSelect.selectedOptions[0]?.textContent || "",
+    constraint,
+  });
+  return constraint;
 }
 
-async function connect() {
+function shouldRetryConnect(error) {
+  const message = String(error?.message || "");
+  return !/api key|client secret|当前浏览器不支持|Missing OpenAI/i.test(message);
+}
+
+async function connect(options = {}) {
+  const retries = options.retries ?? 1;
   connectButton.disabled = true;
   connectButton.textContent = "连接中";
   setStatus("连接中");
-  hint.textContent = "正在请求麦克风权限并创建 Realtime 会话。";
+  hint.textContent = isDebugMode() ? "正在请求麦克风权限。" : "正在请求麦克风权限并创建 Realtime 会话。";
 
   try {
+    if (isDebugMode()) {
+      await connectDebug();
+      return;
+    }
+
     if (isAndroidApp) {
       const hasKey = await androidCall("hasApiKey");
       if (!hasKey) {
         throw new Error("请先保存 OpenAI API key");
       }
-      if (selectedInputDeviceId) await androidCall("selectAudioDevice", `input:${selectedInputDeviceId}`);
     }
 
     const tokenResponse = await fetch(`/api/session?mode=${encodeURIComponent(mode)}`);
@@ -171,7 +234,9 @@ async function connect() {
       autoListenButton.disabled = false;
       connectButton.textContent = "断开";
       connectButton.disabled = false;
-      hint.textContent = "按住麦克风说话，或打开自动监听。";
+      hint.textContent = shouldUseNativeInput()
+        ? "正在使用 Android 原生 DJI 输入。按住麦克风说话，或打开自动监听。"
+        : "按住麦克风说话，或打开自动监听。";
       if (pendingAutoListen) {
         pendingAutoListen = false;
         setAutoListening(true);
@@ -184,14 +249,25 @@ async function connect() {
       handleRealtimeEvent(event);
     });
 
-    micStream = await navigator.mediaDevices.getUserMedia({
-      audio: selectedInputConstraint(),
-    });
-
     await refreshAudioDevices();
-    micTrack = micStream.getAudioTracks()[0];
-    micTrack.enabled = false;
-    pc.addTrack(micTrack, micStream);
+    if (shouldUseNativeInput()) {
+      pc.addTransceiver("audio", { direction: "recvonly" });
+      const nativeStarted = await androidCall("startInputStream", nativeInputDeviceId);
+      if (!nativeStarted?.ok) {
+        throw new Error(`原生 DJI 输入启动失败：${nativeStarted?.error || "未知错误"}`);
+      }
+      nativeInputActive = true;
+      logDebug("native_input.start", nativeStarted);
+    } else {
+      micStream = await navigator.mediaDevices.getUserMedia({
+        audio: selectedInputConstraint(),
+      });
+      await refreshAudioDevices();
+      micTrack = micStream.getAudioTracks()[0];
+      reportActiveInputDevice("realtime");
+      micTrack.enabled = false;
+      pc.addTrack(micTrack, micStream);
+    }
 
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
@@ -215,9 +291,54 @@ async function connect() {
     });
   } catch (error) {
     disconnect();
+    if (retries > 0 && shouldRetryConnect(error)) {
+      setStatus("重试中");
+      hint.textContent = `连接失败，正在重试：${error.message}`;
+      await delay(650);
+      return connect({ retries: retries - 1 });
+    }
     setStatus("错误", "error");
     hint.textContent = error.message;
   }
+}
+
+async function connectDebug() {
+  if (!window.MediaRecorder) {
+    throw new Error("当前浏览器不支持本地录音回放。");
+  }
+
+  micStream = await navigator.mediaDevices.getUserMedia({
+    audio: selectedInputConstraint(),
+  });
+  await refreshAudioDevices();
+  micTrack = micStream.getAudioTracks()[0];
+  reportActiveInputDevice("debug");
+  micTrack.enabled = false;
+
+  remoteAudio = document.createElement("audio");
+  remoteAudio.autoplay = true;
+  remoteAudio.addEventListener("ended", () => {
+    if (!isDebugMode() || !debugConnected) return;
+    translationText.textContent = "播放完成";
+    hint.textContent = "按住麦克风可以再次测试。";
+  });
+  document.body.append(remoteAudio);
+  setupAudioRouting();
+  await applyOutputDevice();
+
+  debugConnected = true;
+  paused = false;
+  currentTranslation = "";
+  sourceText.textContent = "等待麦克风输入";
+  translationText.textContent = "松开后播放录音";
+  setStatus("测试模式", "ready");
+  talkButton.disabled = false;
+  talkButton.classList.remove("paused");
+  talkButton.setAttribute("aria-label", "按住测试麦克风");
+  autoListenButton.disabled = true;
+  connectButton.textContent = "断开";
+  connectButton.disabled = false;
+  hint.textContent = "麦克风测试模式不会调用 API。按住录音，松开后播放刚才的声音。";
 }
 
 function handleRealtimeEvent(event) {
@@ -288,27 +409,99 @@ function applyOutputPan() {
 }
 
 function startTalking(event) {
-  if (paused || !micTrack || talkButton.disabled || autoListening) return;
+  if (paused || !inputReady() || talkButton.disabled || autoListening) return;
   event.preventDefault();
   currentTranslation = "";
-  translationText.textContent = "等待你说完";
-  micTrack.enabled = true;
+  translationText.textContent = isDebugMode() ? "正在录音" : "等待你说完";
+  if (shouldUseNativeInput()) {
+    nativeInputSending = true;
+  } else {
+    micTrack.enabled = true;
+  }
   talkButton.classList.add("recording");
-  hint.textContent = "正在听，松开后翻译。";
+  hint.textContent = isDebugMode() ? "正在录音，松开后会立刻回放。" : "正在听，松开后翻译。";
+
+  if (isDebugMode()) {
+    startDebugRecording();
+  }
 }
 
 function stopTalking(event) {
-  if (paused || !micTrack || talkButton.disabled || autoListening) return;
+  if (paused || !inputReady() || talkButton.disabled || autoListening) return;
   event.preventDefault();
-  micTrack.enabled = false;
+  if (shouldUseNativeInput()) {
+    nativeInputSending = false;
+  } else {
+    micTrack.enabled = false;
+  }
   talkButton.classList.remove("recording");
+  if (isDebugMode()) {
+    stopDebugRecording();
+    return;
+  }
+  if (shouldUseNativeInput()) {
+    sendRealtimeEvent({ type: "input_audio_buffer.commit" });
+    sendRealtimeEvent({ type: "response.create" });
+  }
   hint.textContent = "处理中。";
 }
 
+function startDebugRecording() {
+  if (!micStream || mediaRecorder?.state === "recording") return;
+  if (playbackUrl) {
+    URL.revokeObjectURL(playbackUrl);
+    playbackUrl = "";
+  }
+  recordedChunks = [];
+  mediaRecorder = new MediaRecorder(micStream);
+  mediaRecorder.addEventListener("dataavailable", (event) => {
+    if (event.data.size > 0) recordedChunks.push(event.data);
+  });
+  mediaRecorder.addEventListener("stop", () => {
+    playDebugRecording();
+  });
+  mediaRecorder.start();
+  sourceText.textContent = "正在录音";
+}
+
+function stopDebugRecording() {
+  if (mediaRecorder?.state === "recording") {
+    hint.textContent = "正在准备回放。";
+    mediaRecorder.stop();
+  } else {
+    hint.textContent = "没有录到声音，请再试一次。";
+  }
+}
+
+function playDebugRecording() {
+  if (!recordedChunks.length || !remoteAudio) {
+    sourceText.textContent = "未录到音频";
+    translationText.textContent = "请检查麦克风权限或输入设备";
+    hint.textContent = "没有录到声音，请确认麦克风已授权并选择了正确输入设备。";
+    return;
+  }
+
+  const recording = new Blob(recordedChunks, { type: mediaRecorder?.mimeType || "audio/webm" });
+  playbackUrl = URL.createObjectURL(recording);
+  remoteAudio.srcObject = null;
+  remoteAudio.src = playbackUrl;
+  remoteAudio.currentTime = 0;
+  sourceText.textContent = "已录到麦克风声音";
+  translationText.textContent = "正在播放录音";
+  hint.textContent = "正在播放刚才的输入声音。";
+  remoteAudio.play().catch((error) => {
+    hint.textContent = `播放失败：${error.message}`;
+  });
+}
+
 function setAutoListening(nextValue) {
-  if (!micTrack || autoListenButton.disabled) return;
+  if (!inputReady() || autoListenButton.disabled) return;
   autoListening = nextValue;
-  micTrack.enabled = autoListening;
+  if (shouldUseNativeInput()) {
+    nativeInputSending = autoListening;
+  } else {
+    micTrack.enabled = autoListening;
+  }
   autoListenButton.classList.toggle("active", autoListening);
   autoListenButton.setAttribute("aria-pressed", String(autoListening));
   talkButton.classList.toggle("auto-listening", autoListening);
@@ -318,7 +511,9 @@ function setAutoListening(nextValue) {
 
   if (autoListening) {
     currentTranslation = "";
-    hint.textContent = "自动监听已开启，说完一句话后会自动翻译。点击中间按钮暂停。";
+    hint.textContent = shouldUseNativeInput()
+      ? "自动监听已开启，正在从 DJI 原生输入发送音频。点击中间按钮暂停。"
+      : "自动监听已开启，说完一句话后会自动翻译。点击中间按钮暂停。";
     translationText.textContent = "正在监听";
   } else {
     hint.textContent = "自动监听已关闭，可以按住麦克风说话。";
@@ -335,7 +530,7 @@ function pauseAutoListening() {
 async function resumeAutoListening() {
   if (!paused) return;
   pendingAutoListen = true;
-  await connect();
+  await connect({ retries: 1 });
 }
 
 function setStereoRouting(nextValue) {
@@ -364,36 +559,109 @@ function replaceOptions(select, devices, defaultLabel) {
   }
 }
 
-async function refreshAudioDevices() {
-  if (isAndroidApp) {
-    const inputDevices = (await androidCall("listAudioDevices", "input")) || [];
-    const outputDevices = (await androidCall("listAudioDevices", "output")) || [];
-    replaceOptions(inputDeviceSelect, inputDevices, "系统默认输入");
-    replaceOptions(outputDeviceSelect, outputDevices, "系统默认输出");
-    inputDeviceSelect.value = selectedInputDeviceId;
-    outputDeviceSelect.value = selectedOutputDeviceId;
+function restoreInputSelectionByLabel() {
+  if (!selectedInputDeviceId || [...inputDeviceSelect.options].some((option) => option.value === selectedInputDeviceId)) {
     return;
   }
+  const normalizedLabel = selectedInputLabel.trim().toLowerCase();
+  if (!normalizedLabel) return;
+  const matchedOption = [...inputDeviceSelect.options].find((option) => {
+    const label = option.textContent.trim().toLowerCase();
+    return label === normalizedLabel || label.includes(normalizedLabel) || normalizedLabel.includes(label);
+  });
+  if (!matchedOption) return;
+  selectedInputDeviceId = matchedOption.value;
+  inputDeviceSelect.value = selectedInputDeviceId;
+  logDebug("audio.input_remapped_by_label", {
+    selectedInputLabel,
+    selectedInputDeviceId,
+  });
+}
 
+async function refreshAudioDevices() {
   if (!navigator.mediaDevices?.enumerateDevices) return;
   const devices = await navigator.mediaDevices.enumerateDevices();
+  const browserInputs = devices.filter((device) => device.kind === "audioinput");
+  logDebug("audio.devices", {
+    inputs: browserInputs
+      .map((device) => ({
+        label: device.label || "(no label)",
+        deviceId: device.deviceId,
+        groupId: device.groupId,
+      })),
+  });
+  if (isAndroidApp) {
+    const nativeInputs = (await androidCall("listAudioDevices", "input")) || [];
+    const nativeWirelessMic = nativeInputs.find((device) => /wireless mic rx|dji/i.test(device.label || ""));
+    nativeInputDeviceId = nativeWirelessMic?.deviceId || "";
+    logDebug("android.audio.inputs", {
+      inputs: nativeInputs.map((device) => ({
+        label: device.label || "(no label)",
+        deviceId: device.deviceId,
+      })),
+    });
+    if (nativeInputTestButton) {
+      nativeInputTestButton.hidden = !nativeWirelessMic;
+      nativeInputTestButton.dataset.deviceId = nativeWirelessMic?.deviceId || "";
+      nativeInputTestButton.textContent = nativeWirelessMic
+        ? `测试 ${nativeWirelessMic.label} 原生输入`
+        : "测试 DJI 原生输入";
+    }
+    const nativeHasWirelessMic = Boolean(nativeWirelessMic);
+    const browserHasWirelessMic = browserInputs.some((device) => /wireless mic rx|dji/i.test(device.label || ""));
+    if (nativeHasWirelessMic && !browserHasWirelessMic) {
+      hint.textContent = "Android 系统能看到 Wireless Mic Rx，但 WebView 没把它暴露为浏览器麦克风。详情见事件日志。";
+    }
+  }
   replaceOptions(
     inputDeviceSelect,
-    devices.filter((device) => device.kind === "audioinput"),
-    "系统默认输入",
+    browserInputs,
+    isAndroidApp ? "浏览器默认输入" : "系统默认输入",
   );
+  restoreInputSelectionByLabel();
   replaceOptions(
     outputDeviceSelect,
-    devices.filter((device) => device.kind === "audiooutput"),
-    "系统默认输出",
+    isAndroidApp
+      ? ((await androidCall("listAudioDevices", "output")) || [])
+      : devices.filter((device) => device.kind === "audiooutput"),
+    isAndroidApp ? "Android 默认输出" : "系统默认输出",
   );
   inputDeviceSelect.value = selectedInputDeviceId;
   outputDeviceSelect.value = selectedOutputDeviceId;
 }
 
+function reportActiveInputDevice(context) {
+  if (!micTrack) return;
+  const settings = micTrack.getSettings ? micTrack.getSettings() : {};
+  const selectedOption = inputDeviceSelect.selectedOptions[0];
+  const selectedLabel = selectedOption?.textContent || "系统默认输入";
+  const actualDeviceId = settings.deviceId || "";
+  const selectedDeviceId = selectedInputDeviceId || "";
+  const matched =
+    !selectedDeviceId ||
+    !actualDeviceId ||
+    actualDeviceId === selectedDeviceId;
+
+  logDebug("audio.active_input", {
+    context,
+    selectedLabel,
+    selectedDeviceId: selectedDeviceId || "default",
+    actualDeviceId: actualDeviceId || "(not reported)",
+    settings,
+    matched,
+  });
+
+  if (selectedDeviceId && actualDeviceId && actualDeviceId !== selectedDeviceId) {
+    hint.textContent = `浏览器没有使用所选麦克风：已选 ${selectedLabel}，实际 deviceId 不一致。详情见事件日志。`;
+  } else if (selectedDeviceId) {
+    hint.textContent = `正在使用 WebView 输入设备：${selectedLabel}`;
+  }
+}
+
 async function applyOutputDevice() {
   if (isAndroidApp) {
-    await androidCall("selectAudioDevice", `output:${selectedOutputDeviceId}`);
+    await selectAndroidAudioDevice(`output:${selectedOutputDeviceId}`);
+    return;
   }
   try {
     if (audioContext?.setSinkId) {
@@ -407,6 +675,18 @@ async function applyOutputDevice() {
   } catch (error) {
     hint.textContent = `输出设备切换失败：${error.message}`;
   }
+}
+
+async function selectAndroidAudioDevice(value) {
+  if (!isAndroidApp) return true;
+  let selected = false;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    selected = Boolean(await androidCall("selectAudioDevice", value));
+    if (selected) return true;
+    await delay(180 * (attempt + 1));
+  }
+  hint.textContent = "音频设备切换可能未生效，请确认设备已连接后重试。";
+  return false;
 }
 
 function androidCall(method, value = "") {
@@ -433,6 +713,36 @@ function androidCall(method, value = "") {
   });
 }
 
+function sendRealtimeEvent(event) {
+  if (dc?.readyState !== "open") return false;
+  dc.send(JSON.stringify(event));
+  return true;
+}
+
+function stopNativeInputStream() {
+  nativeInputSending = false;
+  nativeInputActive = false;
+  if (isAndroidApp) {
+    androidCall("stopInputStream").catch(() => {});
+  }
+}
+
+window.__androidNativeAudioChunk = (audio) => {
+  if (!nativeInputSending || dc?.readyState !== "open") return;
+  sendRealtimeEvent({
+    type: "input_audio_buffer.append",
+    audio,
+  });
+};
+
+window.__androidNativeAudioStatus = (payload) => {
+  try {
+    logDebug("android.native_input_status", JSON.parse(payload));
+  } catch {
+    logDebug("android.native_input_status", { payload });
+  }
+};
+
 async function initAndroidKeyControls() {
   if (!isAndroidApp) return;
   keyRow.hidden = false;
@@ -445,12 +755,12 @@ modeButtons.forEach((button) => {
 });
 
 connectButton.addEventListener("click", () => {
-  if (pc) {
+  if (isConnected()) {
     disconnect();
     hint.textContent = "已断开。";
     return;
   }
-  connect();
+  connect({ retries: 1 });
 });
 
 autoListenButton.addEventListener("click", () => {
@@ -463,14 +773,16 @@ stereoButton.addEventListener("click", () => {
 
 inputDeviceSelect.addEventListener("change", async () => {
   selectedInputDeviceId = inputDeviceSelect.value;
-  if (isAndroidApp) await androidCall("selectAudioDevice", `input:${selectedInputDeviceId}`);
-  if (pc) {
+  selectedInputLabel = inputDeviceSelect.selectedOptions[0]?.textContent || "";
+  if (isConnected()) {
     const resumeAuto = autoListening;
     disconnect();
     pendingAutoListen = resumeAuto;
-    connect();
+    connect({ retries: 1 });
   } else {
-    hint.textContent = "输入设备已选择，下次连接生效。";
+    hint.textContent = isAndroidApp
+      ? "输入设备已选择，下次连接时由 WebView 麦克风约束生效。"
+      : "输入设备已选择，下次连接生效。";
   }
 });
 
@@ -478,6 +790,30 @@ outputDeviceSelect.addEventListener("change", async () => {
   selectedOutputDeviceId = outputDeviceSelect.value;
   await applyOutputDevice();
   hint.textContent = "输出设备已切换。";
+});
+
+nativeInputTestButton?.addEventListener("click", async () => {
+  const deviceId = nativeInputTestButton.dataset.deviceId;
+  if (!deviceId) return;
+  nativeInputTestButton.disabled = true;
+  hint.textContent = "正在用 Android 原生录音测试 DJI，请对着 DJI 说话。";
+  try {
+    const result = await androidCall("testInputDevice", deviceId);
+    logDebug("android.input_test", result || {});
+    if (!result?.ok) {
+      hint.textContent = `原生输入测试失败：${result?.error || "未知错误"}`;
+    } else if (result.routed?.deviceId !== result.requested?.deviceId) {
+      hint.textContent = `原生录音没有路由到 DJI，实际路由：${result.routed?.label || "未知"}`;
+    } else if (Number(result.peak || 0) < 0.01) {
+      hint.textContent = "原生录音已路由到 DJI，但电平很低，请确认 DJI 发射端未静音。";
+    } else {
+      hint.textContent = `原生录音已路由到 DJI，peak=${Number(result.peak).toFixed(3)}。`;
+    }
+  } catch (error) {
+    hint.textContent = `原生输入测试异常：${error.message}`;
+  } finally {
+    nativeInputTestButton.disabled = false;
+  }
 });
 
 saveKeyButton.addEventListener("click", async () => {

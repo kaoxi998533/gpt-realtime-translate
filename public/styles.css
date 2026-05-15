@@ -95,7 +95,7 @@ h1 {
 
 .controls {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin-bottom: 28px;
 }
@@ -236,6 +236,22 @@ h1 {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.native-test {
+  height: 38px;
+  padding: 0 14px;
+  border: 1px solid #9ed8c9;
+  border-radius: 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.native-test:disabled {
+  cursor: wait;
+  opacity: 0.65;
 }
 
 .device-field {

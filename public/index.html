@@ -21,6 +21,7 @@
           <button class="mode active" data-mode="auto" type="button">自动</button>
           <button class="mode" data-mode="zh_en" type="button">中 → EN</button>
           <button class="mode" data-mode="en_zh" type="button">EN → 中</button>
+          <button class="mode" data-mode="debug" type="button">麦克风测试</button>
         </div>
 
         <div class="stage">
@@ -57,6 +58,7 @@
               </select>
             </label>
           </div>
+          <button class="native-test" id="nativeInputTestButton" type="button" hidden>测试 DJI 原生输入</button>
           <div class="key-row" id="keyRow" hidden>
             <input id="apiKeyInput" type="password" autocomplete="off" placeholder="OpenAI API key" />
             <button id="saveKeyButton" type="button">保存</button>
