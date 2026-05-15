@@ -100,6 +100,36 @@ function cleanupMedia() {
   micStream = null;
 }
 
+async function warmUpBrowserDefaultInput() {
+  if (!isAndroidApp || isDebugMode() || !navigator.mediaDevices?.getUserMedia) return false;
+  let warmupStream;
+  try {
+    warmupStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    });
+    logDebug("audio.browser_warmup", {
+      ok: true,
+      tracks: warmupStream.getAudioTracks().map((track) => ({
+        label: track.label || "(no label)",
+        settings: track.getSettings ? track.getSettings() : {},
+      })),
+    });
+    return true;
+  } catch (error) {
+    logDebug("audio.browser_warmup", {
+      ok: false,
+      error: error.message,
+    });
+    return false;
+  } finally {
+    warmupStream?.getTracks().forEach((track) => track.stop());
+  }
+}
+
 function resetConnectedControls() {
   autoListening = false;
   talkButton.disabled = true;
@@ -848,5 +878,14 @@ window.realtimeTranslateDisconnect = () => {
   disconnect();
   hint.textContent = "应用已进入后台，Realtime 已断开。";
 };
+async function initializeAudioDevices() {
+  await refreshAudioDevices();
+  if (isAndroidApp) {
+    await warmUpBrowserDefaultInput();
+    await delay(160);
+    await refreshAudioDevices();
+  }
+}
+
 initAndroidKeyControls();
-refreshAudioDevices();
+initializeAudioDevices();
